@@ -1,9 +1,27 @@
 import os
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 from bs4 import BeautifulSoup
 import discord
 from discord.ext import tasks
+
+# --- SERVIDOR WEB FALSO PARA O RENDER ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Blox Fruits Online!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+# Inicia o servidor web em segundo plano para o Render não dar timeout
+threading.Thread(target=run_web_server, daemon=True).start()
+# ---------------------------------------
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
@@ -18,7 +36,7 @@ FRUTAS_DESEJADAS = [
     "barrier", "ghost", "magma", "quake", "buddha", "love", "spider",
     "sound", "phoenix", "portal", "rumble", "pain", "blizzard", "gravity",
     "mammoth", "t-rex", "dough", "shadow", "venom", "control", "spirit",
-    "dragon", "leopard", "kitsune", "gas", "dor"
+    "dragon", "leopard", "kitsune", "gas", "magnet"
 ]
 
 def verificar_frutas_perm(texto):
@@ -30,7 +48,7 @@ def verificar_frutas_perm(texto):
     return False
 
 @tasks.loop(seconds=20)
-async def monitorar_loja():  # <-- CORRIGIDO PARA ASYNC DEF AQUI
+async def monitorar_loja():
     url = "https://legasforn.com.br"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -96,7 +114,7 @@ async def monitorar_loja():  # <-- CORRIGIDO PARA ASYNC DEF AQUI
             embed.add_field(name="🔗 Link Direto para Compra", value=f"[👉 CLIQUE AQUI PARA COMPRAR]({link_compra})", inline=False)
             embed.set_footer(text="Legas Forn Monitor • Ciclo de 20s")
 
-            await canal.send(embed=embed)  # <-- Mudado para await direto
+            await canal.send(embed=embed)
             contas_enviadas.add(prod_id)
 
     except Exception as e:
