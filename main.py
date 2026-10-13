@@ -83,4 +83,3 @@ def monitorar_loja():
 
             gamepasses_texto = texto_completo.replace(nickname, "").strip()
             if len(gamepasses_texto) > 300:
-                game
