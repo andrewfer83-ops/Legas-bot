@@ -9,13 +9,10 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-# ID do canal configurado
 CHANNEL_ID = 1559298800676245658
 
 contas_enviadas = set()
 
-# Lista de frutas consideradas Flame ou superior
 FRUTAS_DESEJADAS = [
     "flame", "falcon", "ice", "sand", "dark", "diamond", "light", "rubber",
     "barrier", "ghost", "magma", "quake", "buddha", "love", "spider",
@@ -56,15 +53,12 @@ def monitorar_loja():
             texto_completo = prod.get_text(separator=" ", strip=True)
             texto_lower = texto_completo.lower()
 
-            # 1. Filtro estrito para Blox Fruits
             if "blox" not in texto_lower and "fruit" not in texto_lower:
                 continue
 
-            # 2. Filtro para Frutas Perm (Flame+)
             if not verificar_frutas_perm(texto_completo):
                 continue
 
-            # Link de compra
             link_tag = prod if prod.name == "a" else prod.find("a")
             if not link_tag or not link_tag.get("href"):
                 continue
@@ -77,9 +71,45 @@ def monitorar_loja():
             if prod_id in contas_enviadas:
                 continue
 
-            # Extração de Nickname e Gamepasses
             titulo_elem = prod.find(["h1", "h2", "h3", "h4", "span", "strong"])
             nickname = titulo_elem.get_text(strip=True) if titulo_elem else "Conta Blox Fruits"
 
             gamepasses_texto = texto_completo.replace(nickname, "").strip()
             if len(gamepasses_texto) > 300:
+                gamepasses_texto = gamepasses_texto[:300] + "..."
+            if not gamepasses_texto:
+                gamepasses_texto = "Consulte as Gamepasses diretamente no site."
+
+            preco = "Ver no site"
+            if "r$" in texto_lower:
+                partes = texto_completo.split("R$")
+                if len(partes) > 1:
+                    preco = "R$" + partes[1].split()[0]
+
+            embed = discord.Embed(
+                title="🚨 NOVA CONTA DISPONÍVEL / RESTOCK!",
+                color=0x2ecc71
+            )
+            embed.add_field(name="👤 Nick / Título", value=f"**{nickname}**", inline=False)
+            embed.add_field(name="🎮 Gamepasses / Descrição", value=gamepasses_texto, inline=False)
+            embed.add_field(name="💰 Valor", value=preco, inline=True)
+            embed.add_field(name="🔗 Link Direto para Compra", value=f"[👉 CLIQUE AQUI PARA COMPRAR]({link_compra})", inline=False)
+            embed.set_footer(text="Legas Forn Monitor • Ciclo de 20s")
+
+            asyncio.run_coroutine_threadsafe(canal.send(embed=embed), client.loop)
+            contas_enviadas.add(prod_id)
+
+    except Exception as e:
+        print(f"Erro no monitoramento: {e}")
+
+@client.event
+async def on_ready():
+    print(f"🤖 Bot conectado com sucesso como {client.user}")
+    if not monitorar_loja.is_running():
+        monitorar_loja.start()
+
+if __name__ == "__main__":
+    if TOKEN:
+        client.run(TOKEN)
+    else:
+        print("Erro: A variável de ambiente DISCORD_TOKEN não está definida!")
