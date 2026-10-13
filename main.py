@@ -30,7 +30,7 @@ def verificar_frutas_perm(texto):
     return False
 
 @tasks.loop(seconds=20)
-def monitorar_loja():
+async def monitorar_loja():  # <-- CORRIGIDO PARA ASYNC DEF AQUI
     url = "https://legasforn.com.br"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -96,7 +96,7 @@ def monitorar_loja():
             embed.add_field(name="🔗 Link Direto para Compra", value=f"[👉 CLIQUE AQUI PARA COMPRAR]({link_compra})", inline=False)
             embed.set_footer(text="Legas Forn Monitor • Ciclo de 20s")
 
-            asyncio.run_coroutine_threadsafe(canal.send(embed=embed), client.loop)
+            await canal.send(embed=embed)  # <-- Mudado para await direto
             contas_enviadas.add(prod_id)
 
     except Exception as e:
