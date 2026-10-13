@@ -1,117 +1,128 @@
 import os
-import discord
-from discord.ext import tasks
+import asyncio
 import requests
 from bs4 import BeautifulSoup
-import re
+import discord
+from discord.ext import tasks
 
-# ==================== CONFIGURAÇÕES ====================
-TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = 1559298800676245658  # ID do canal do Discord
-SITE_BASE_URL = "https://legasforn.com.br"
-
-# Lista de Frutas Perm consideradas valiosas (da Flame para cima)
-FRUTAS_RELEVANTES = [
-    "flame", "chama", "ice", "gelo", "sand", "areia", "dark", "escuridao", 
-    "light", "luz", "magma", "quake", "terremoto", "buddha", "buda", "love", 
-    "amor", "spider", "aranha", "sound", "som", "phoenix", "fenix", "portal", 
-    "rumble", "trovao", "pain", "dor", "blizzard", "nevasca", "gravity", "gravidade", 
-    "mammoth", "mamute", "t-rex", "trex", "dough", "massa", "shadow", "sombra", 
-    "venom", "veneno", "control", "controle", "spirit", "espirito", "dragon", 
-    "dragao", "leopard", "leopardo", "kitsune", "yeti", "gas"
-]
-
+# Configuração de Intents do Discord
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
-vistos = set()
+TOKEN = os.getenv("DISCORD_TOKEN")
+# SUBSTIUIA PELO ID REAL DO TEU CANAL NO DISCORD
+CHANNEL_ID = 1559298800676245658
 
-def extrair_frutas_perm(texto):
+contas_enviadas = set()
+
+# Lista de frutas consideradas Flame ou superior
+FRUTAS_DESEJADAS = [
+    "flame", "falcon", "ice", "sand", "dark", "diamond", "light", "rubber",
+    "barrier", "ghost", "magma", "quake", "buddha", "love", "spider",
+    "sound", "phoenix", "portal", "rumble", "pain", "blizzard", "gravity",
+    "mammoth", "t-rex", "dough", "shadow", "venom", "control", "spirit",
+    "dragon", "leopard", "kitsune", "gas", "dor"
+]
+
+def verificar_frutas_perm(texto):
     texto_lower = texto.lower()
-    frutas_encontradas = []
-    
-    for fruta in FRUTAS_RELEVANTES:
-        if fruta in texto_lower:
-            frutas_encontradas.append(fruta.capitalize())
-            
-    if not frutas_encontradas:
-        return "Nenhuma fruta Perm (Flame+) informada"
-    
-    return ", ".join(list(dict.fromkeys(frutas_encontradas)))
+    if "perm" in texto_lower or "permanente" in texto_lower:
+        for fruta in FRUTAS_DESEJADAS:
+            if fruta in texto_lower:
+                return True
+    return False
 
 @tasks.loop(seconds=20)
-async def verificar_estoque_rapido():
-    await client.wait_until_ready()
-    channel = client.get_channel(CHANNEL_ID)
-    if not channel:
-        return
-
+def monitorar_loja():
+    url = "https://legasforn.com.br"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    for pagina in range(1, 6):
-        url_pagina = f"{SITE_BASE_URL}/loja?page={pagina}" if pagina > 1 else f"{SITE_BASE_URL}/loja"
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return
+
+        soup = BeautifulSoup(response.text, "html.parser")
         
-        try:
-            response = requests.get(url_pagina, headers=headers, timeout=5)
-            if response.status_code != 200:
+        # Procura os cards/caixas de produto no HTML do site
+        produtos = soup.find_all(["div", "a", "article"], class_=lambda c: c and ("product" in c.lower() or "card" in c.lower() or "item" in c.lower()))
+
+        canal = client.get_channel(CHANNEL_ID)
+        if not canal:
+            return
+
+        for prod in produtos:
+            texto_completo = prod.get_text(separator=" ", strip=True)
+            texto_lower = texto_completo.lower()
+
+            # 1. Filtro estrito para apenas Blox Fruits
+            if "blox" not in texto_lower and "fruit" not in texto_lower:
                 continue
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            links_produtos = soup.find_all('a', href=True)
+            # 2. Filtro para Frutas Permanentes (Flame+)
+            if not verificar_frutas_perm(texto_completo):
+                continue
 
-            for tag_a in links_produtos:
-                href = tag_a['href']
-                
-                if "/produto/" in href or "/item/" in href or "/conta/" in href or "/loja/" in href:
-                    link_completo = href if href.startswith("http") else f"{SITE_BASE_URL}{href}"
+            # Extração do Link de Compra
+            link_tag = prod if prod.name == "a" else prod.find("a")
+            if not link_tag or not link_tag.get("href"):
+                continue
 
-                    if link_completo in vistos:
-                        continue
+            link_compra = link_tag.get("href")
+            if not link_compra.startswith("http"):
+                link_compra = f"https://legasforn.com.br{link_compra if link_compra.startswith('/') else '/' + link_compra}"
 
-                    res_prod = requests.get(link_completo, headers=headers, timeout=5)
-                    if res_prod.status_code != 200:
-                        continue
-                    
-                    soup_prod = BeautifulSoup(res_prod.text, 'html.parser')
-                    texto_pagina = soup_prod.get_text(separator=" ", strip=True)
+            # Identificador para não repetir no Discord
+            prod_id = f"{texto_completo[:30]}_{link_compra}"
+            if prod_id in contas_enviadas:
+                continue
 
-                    tag_titulo = soup_prod.find(['h1', 'h2'])
-                    titulo = tag_titulo.get_text(strip=True) if tag_titulo else "Conta Blox Fruits"
+            # --- EXTRAÇÃO DE NICKNAME E GAMEPASSES ---
+            
+            # 1. Título/Nickname da conta
+            titulo_elem = prod.find(["h1", "h2", "h3", "h4", "span", "strong"])
+            nickname = titulo_elem.get_text(strip=True) if titulo_elem else "Conta Blox Fruits"
 
-                    precos = re.findall(r'R\$\s*[\d\.,]+', texto_pagina)
-                    preco = precos[0] if precos else "Consulte no site"
+            # 2. Gamepasses / Detalhes do item
+            # Extrai o texto da descrição limpando espaços extras
+            gamepasses_texto = texto_completo.replace(nickname, "").strip()
+            if len(gamepasses_texto) > 300:
+                gamepasses_texto = gamepasses_texto[:300] + "..."
+            if not gamepasses_texto:
+                gamepasses_texto = "Consulte as Gamepasses e detalhes diretamente no link do site."
 
-                    gamepasses_match = re.search(r'(gamepass|gamepasses|passes)[:\s]+([^\.\n]+)', texto_pagina, re.IGNORECASE)
-                    gamepasses = gamepasses_match.group(0) if gamepasses_match else "Verifique na descrição do site"
+            # Extração de Preço (se houver)
+            preco = "Ver no site"
+            if "r$" in texto_lower:
+                partes = texto_completo.split("R$")
+                if len(partes) > 1:
+                    preco = "R$" + partes[1].split()[0]
 
-                    frutas_perm = extrair_frutas_perm(texto_pagina)
+            # --- CRIAÇÃO DO EMBED NO DISCORD ---
+            embed = discord.Embed(
+                title="🚨 NOVA CONTA DISPONÍVEL / RESTOCK!",
+                color=0x2ecc71
+            )
+            embed.add_field(name="👤 Nick / Título da Conta", value=f"**{nickname}**", inline=False)
+            embed.add_field(name="🎮 Gamepasses / Descrição", value=gamepasses_texto, inline=False)
+            embed.add_field(name="💰 Valor", value=preco, inline=True)
+            embed.add_field(name="🔗 Link Direto para Compra", value=f"[👉 CLIQUE AQUI PARA COMPRAR]({link_compra})", inline=False)
+            embed.set_footer(text="Legas Forn Monitor • Ciclo de 20s")
 
-                    embed = discord.Embed(
-                        title="🚨 NOVA CONTA LANÇADA / RESTOCK!",
-                        description=f"**{titulo}**",
-                        color=0x00FF66
-                    )
-                    embed.add_field(name="💰 Valor", value=f"`{preco}`", inline=True)
-                    embed.add_field(name="🎮 Gamepasses", value=gamepasses[:1024], inline=False)
-                    embed.add_field(name="🍇 Frutas Perm (Flame+)", value=frutas_perm[:1024], inline=False)
-                    embed.add_field(
-                        name="🔗 Link Direto para Compra", 
-                        value=f"👉 **[CLIQUE AQUI PARA COMPRAR ESTA CONTA]({link_completo})**", 
-                        inline=False
-                    )
-                    embed.set_footer(text=f"Legas Forn Monitor • Ciclo de 20s")
+            # Envia para o Discord
+            asyncio.run_coroutine_threadsafe(canal.send(embed=embed), client.loop)
+            contas_enviadas.add(prod_id)
 
-                    await channel.send(embed=embed)
-                    vistos.add(link_completo)
-
-        except Exception as e:
-            pass
+    except Exception as e:
+        print(f"Erro no monitoramento: {e}")
 
 @client.event
 async def on_ready():
-    print(f'🤖 Bot conectado como {client.user}!')
-    verificar_estoque_rapido.start()
+    print(f"🤖 Bot conectado com sucesso como {client.user}")
+    if not monitorar_loja.is_running():
+        monitorar_loja.start()
 
-client.run(TOKEN)
+if __name__ == "__main__":
+    client.run(TOKEN)
